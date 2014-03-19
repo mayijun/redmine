@@ -1,5 +1,5 @@
 /* Redmine - project management software
-   Copyright (C) 2006-2013  Jean-Philippe Lang */
+   Copyright (C) 2006-2014  Jean-Philippe Lang */
 
 function checkAll(id, checked) {
   $('#'+id).find('input[type=checkbox]:enabled').attr('checked', checked);
@@ -113,6 +113,7 @@ function buildFilterRow(field, operator, values) {
   var fieldId = field.replace('.', '_');
   var filterTable = $("#filters-table");
   var filterOptions = availableFilters[field];
+  if (!filterOptions) return;
   var operators = operatorByType[filterOptions['type']];
   var filterValues = filterOptions['values'];
   var i, select;
@@ -412,7 +413,7 @@ function expandScmEntry(id) {
 }
 
 function scmEntryClick(id, url) {
-    el = $('#'+id);
+    var el = $('#'+id);
     if (el.hasClass('open')) {
         collapseScmEntry(id);
         el.addClass('collapsed');
@@ -582,11 +583,32 @@ function addFormObserversForDoubleSubmit() {
   });
 }
 
+function defaultFocus(){
+  if ($('#content :focus').length == 0) {
+    $('#content input[type=text], #content textarea').first().focus();
+  }
+}
+
 function blockEventPropagation(event) {
   event.stopPropagation();
   event.preventDefault();
 }
 
+function toggleDisabledOnChange() {
+  var checked = $(this).is(':checked');
+  $($(this).data('disables')).attr('disabled', checked);
+  $($(this).data('enables')).attr('disabled', !checked);
+}
+function toggleDisabledInit() {
+  $('input[data-disables], input[data-enables]').each(toggleDisabledOnChange);
+}
+$(document).ready(function(){
+  $('#content').on('change', 'input[data-disables], input[data-enables]', toggleDisabledOnChange);
+  toggleDisabledInit();
+});
+
 $(document).ready(setupAjaxIndicator);
 $(document).ready(hideOnLoad);
 $(document).ready(addFormObserversForDoubleSubmit);
+$(document).ready(defaultFocus);
+

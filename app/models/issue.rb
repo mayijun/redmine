@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -38,7 +38,7 @@ class Issue < ActiveRecord::Base
     },
     :readonly => true
 
-  has_many :time_entries, :dependent => :delete_all
+  has_many :time_entries, :dependent => :destroy
   has_and_belongs_to_many :changesets, :order => "#{Changeset.table_name}.committed_on ASC, #{Changeset.table_name}.id ASC"
 
   has_many :relations_from, :class_name => 'IssueRelation', :foreign_key => 'issue_from_id', :dependent => :delete_all
@@ -92,13 +92,17 @@ class Issue < ActiveRecord::Base
   }
 
   before_create :default_assign
-  before_save :close_duplicates, :update_done_ratio_from_issue_status, :force_updated_on_change, :update_closed_on
+  before_save :close_duplicates, :update_done_ratio_from_issue_status,
+              :force_updated_on_change, :update_closed_on, :set_assigned_to_was
   after_save {|issue| issue.send :after_project_change if !issue.id_changed? && issue.project_id_changed?} 
-  after_save :reschedule_following_issues, :update_nested_set_attributes, :update_parent_attributes, :create_journal
+  after_save :reschedule_following_issues, :update_nested_set_attributes,
+             :update_parent_attributes, :create_journal
   # Should be after_create but would be called before previous after_save callbacks
   after_save :after_create_from_copy
   after_destroy :update_parent_attributes
   after_create :send_notification
+  # Keep it at the end of after_save callbacks
+  after_save :clear_assigned_to_was
 
   # Returns a SQL conditions string used to find all issues visible by the specified user
   def self.visible_condition(user, options={})
@@ -196,7 +200,7 @@ class Issue < ActiveRecord::Base
 
   # Overrides Redmine::Acts::Customizable::InstanceMethods#available_custom_fields
   def available_custom_fields
-    (project && tracker) ? (project.all_issue_custom_fields & tracker.custom_fields.all) : []
+    (project && tracker) ? (project.all_issue_custom_fields & tracker.custom_fields) : []
   end
 
   def visible_custom_field_values(user=nil)
@@ -774,9 +778,12 @@ class Issue < ActiveRecord::Base
     end
   end
 
+  # Returns the previous assignee if changed
   def assigned_to_was
-    if assigned_to_id_changed? && assigned_to_id_was.present?
-      @assigned_to_was ||= User.find_by_id(assigned_to_id_was)
+    # assigned_to_id_was is reset before after_save callbacks
+    user_id = @previous_assigned_to_id || assigned_to_id_was
+    if user_id && user_id != assigned_to_id
+      @assigned_to_was ||= User.find_by_id(user_id)
     end
   end
 
@@ -832,8 +839,10 @@ class Issue < ActiveRecord::Base
   #   spent_hours => 0.0
   #   spent_hours => 50.2
   def total_spent_hours
-    @total_spent_hours ||= self_and_descendants.sum("#{TimeEntry.table_name}.hours",
-      :joins => "LEFT JOIN #{TimeEntry.table_name} ON #{TimeEntry.table_name}.issue_id = #{Issue.table_name}.id").to_f || 0.0
+    @total_spent_hours ||=
+      self_and_descendants.
+        joins("LEFT JOIN #{TimeEntry.table_name} ON #{TimeEntry.table_name}.issue_id = #{Issue.table_name}.id").
+        sum("#{TimeEntry.table_name}.hours").to_f || 0.0
   end
 
   def relations
@@ -1082,7 +1091,7 @@ class Issue < ActiveRecord::Base
     if user.logged?
       s << ' created-by-me' if author_id == user.id
       s << ' assigned-to-me' if assigned_to_id == user.id
-      s << ' assigned-to-my-group' if user.groups.any? {|g| g.id = assigned_to_id}
+      s << ' assigned-to-my-group' if user.groups.any? {|g| g.id == assigned_to_id}
     end
     s
   end
@@ -1215,7 +1224,7 @@ class Issue < ActiveRecord::Base
 
   def after_project_change
     # Update project_id on related time entries
-    TimeEntry.update_all(["project_id = ?", project_id], {:issue_id => id})
+    TimeEntry.where({:issue_id => id}).update_all(["project_id = ?", project_id])
 
     # Delete issue relations
     unless Setting.cross_project_issue_relations?
@@ -1279,7 +1288,8 @@ class Issue < ActiveRecord::Base
       # issue was just created
       self.root_id = (@parent_issue.nil? ? id : @parent_issue.root_id)
       set_default_left_and_right
-      Issue.update_all(["root_id = ?, lft = ?, rgt = ?", root_id, lft, rgt], ["id = ?", id])
+      Issue.where(["id = ?", id]).
+        update_all(["root_id = ?, lft = ?, rgt = ?", root_id, lft, rgt])
       if @parent_issue
         move_to_child_of(@parent_issue)
       end
@@ -1302,13 +1312,19 @@ class Issue < ActiveRecord::Base
         move_to_right_of(root)
       end
       old_root_id = root_id
-      self.root_id = (@parent_issue.nil? ? id : @parent_issue.root_id )
-      target_maxright = nested_set_scope.maximum(right_column_name) || 0
-      offset = target_maxright + 1 - lft
-      Issue.update_all(["root_id = ?, lft = lft + ?, rgt = rgt + ?", root_id, offset, offset],
-                        ["root_id = ? AND lft >= ? AND rgt <= ? ", old_root_id, lft, rgt])
-      self[left_column_name] = lft + offset
-      self[right_column_name] = rgt + offset
+      in_tenacious_transaction do
+        @parent_issue.reload_nested_set if @parent_issue
+        self.reload_nested_set
+        self.root_id = (@parent_issue.nil? ? id : @parent_issue.root_id)
+        cond = ["root_id = ? AND lft >= ? AND rgt <= ? ", old_root_id, lft, rgt]
+        self.class.base_class.select('id').lock(true).where(cond)
+        target_maxright = nested_set_scope.maximum(right_column_name) || 0
+        offset = target_maxright + 1 - lft
+        Issue.where(cond).
+          update_all(["root_id = ?, lft = lft + ?, rgt = rgt + ?", root_id, offset, offset])
+        self[left_column_name]  = lft + offset
+        self[right_column_name] = rgt + offset
+      end
       if @parent_issue
         move_to_child_of(@parent_issue)
       end
@@ -1330,7 +1346,7 @@ class Issue < ActiveRecord::Base
   def recalculate_attributes_for(issue_id)
     if issue_id && p = Issue.find_by_id(issue_id)
       # priority = highest priority of children
-      if priority_position = p.children.maximum("#{IssuePriority.table_name}.position", :joins => :priority)
+      if priority_position = p.children.joins(:priority).maximum("#{IssuePriority.table_name}.position")
         p.priority = IssuePriority.find_by_position(priority_position)
       end
 
@@ -1345,12 +1361,13 @@ class Issue < ActiveRecord::Base
       unless Issue.use_status_for_done_ratio? && p.status && p.status.default_done_ratio
         leaves_count = p.leaves.count
         if leaves_count > 0
-          average = p.leaves.average(:estimated_hours).to_f
+          average = p.leaves.where("estimated_hours > 0").average(:estimated_hours).to_f
           if average == 0
             average = 1
           end
-          done = p.leaves.sum("COALESCE(CASE WHEN estimated_hours > 0 THEN estimated_hours ELSE NULL END, #{average}) " +
-			"* (CASE WHEN is_closed = #{connection.quoted_true} THEN 100 ELSE COALESCE(done_ratio, 0) END)", :joins => :status).to_f
+          done = p.leaves.joins(:status).
+            sum("COALESCE(CASE WHEN estimated_hours > 0 THEN estimated_hours ELSE NULL END, #{average}) " +
+                "* (CASE WHEN is_closed = #{connection.quoted_true} THEN 100 ELSE COALESCE(done_ratio, 0) END)").to_f
           progress = done / (average * leaves_count)
           p.done_ratio = progress.round
         end
@@ -1511,6 +1528,18 @@ class Issue < ActiveRecord::Base
     if Setting.notified_events.include?('issue_added')
       Mailer.deliver_issue_add(self)
     end
+  end
+
+  # Stores the previous assignee so we can still have access
+  # to it during after_save callbacks (assigned_to_id_was is reset)
+  def set_assigned_to_was
+    @previous_assigned_to_id = assigned_to_id_was
+  end
+
+  # Clears the previous assignee at the end of after_save callbacks
+  def clear_assigned_to_was
+    @assigned_to_was = nil
+    @previous_assigned_to_id = nil
   end
 
   # Query generator for selecting groups of issue counts for a project

@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -159,6 +159,11 @@ class WikiControllerTest < ActionController::TestCase
     get :show, :project_id => 1, :id => 'Unexistent page'
     assert_response :success
     assert_template 'edit'
+  end
+
+  def test_show_specific_version_of_an_unexistent_page_without_edit_right
+    get :show, :project_id => 1, :id => 'Unexistent page', :version => 1
+    assert_response 404
   end
 
   def test_show_unexistent_page_with_parent_should_preselect_parent
@@ -454,7 +459,7 @@ class WikiControllerTest < ActionController::TestCase
         end
       end
     end
-    assert_redirected_to '/projects/ecookbook/wiki/Page_with_sections'
+    assert_redirected_to '/projects/ecookbook/wiki/Page_with_sections#section-2'
     assert_equal Redmine::WikiFormatting::Textile::Formatter.new(text).update_section(2, "New section content"), page.reload.content.text
   end
 
@@ -477,7 +482,7 @@ class WikiControllerTest < ActionController::TestCase
         end
       end
     end
-    assert_redirected_to '/projects/ecookbook/wiki/Page_with_sections'
+    assert_redirected_to '/projects/ecookbook/wiki/Page_with_sections#section-2'
     page.reload
     assert_equal Redmine::WikiFormatting::Textile::Formatter.new(text).update_section(2, "New section content"), page.content.text
     assert_equal 4, page.content.version
@@ -948,9 +953,12 @@ class WikiControllerTest < ActionController::TestCase
     @request.session[:user_id] = 2
     assert_difference 'Attachment.count' do
       post :add_attachment, :project_id => 1, :id => 'CookBook_documentation',
-        :attachments => {'1' => {'file' => uploaded_test_file('testfile.txt', 'text/plain'), 'description' => 'test file'}}
+           :attachments => {
+             '1' => {'file' => uploaded_test_file('testfile.txt', 'text/plain'),
+                     'description' => 'test file'}
+           }
     end
-    attachment = Attachment.first(:order => 'id DESC')
+    attachment = Attachment.order('id DESC').first
     assert_equal Wiki.find(1).find_page('CookBook_documentation'), attachment.container
   end
 end

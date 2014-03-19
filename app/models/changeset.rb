@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -154,13 +154,14 @@ class Changeset < ActiveRecord::Base
   end
 
   def text_tag(ref_project=nil)
-    tag = if scmid?
-      "commit:#{scmid}"
-    else
-      "r#{revision}"
-    end
+    repo = ""
     if repository && repository.identifier.present?
-      tag = "#{repository.identifier}|#{tag}"
+      repo = "#{repository.identifier}|"
+    end
+    tag = if scmid?
+      "commit:#{repo}#{scmid}"
+    else
+      "#{repo}r#{revision}"
     end
     if ref_project && project && ref_project != project
       tag = "#{project.identifier}:#{tag}"
@@ -197,7 +198,7 @@ class Changeset < ActiveRecord::Base
   # Finds an issue that can be referenced by the commit message
   def find_referenced_issue_by_id(id)
     return nil if id.blank?
-    issue = Issue.find_by_id(id.to_i, :include => :project)
+    issue = Issue.includes(:project).where(:id => id.to_i).first
     if Setting.commit_cross_project_ref?
       # all issues can be referenced/fixed
     elsif issue
@@ -220,9 +221,13 @@ class Changeset < ActiveRecord::Base
     # don't change the status is the issue is closed
     return if issue.status && issue.status.is_closed?
 
-    journal = issue.init_journal(user || User.anonymous, ll(Setting.default_language, :text_status_changed_by_changeset, text_tag(issue.project)))
+    journal = issue.init_journal(user || User.anonymous,
+                                 ll(Setting.default_language,
+                                    :text_status_changed_by_changeset,
+                                    text_tag(issue.project)))
     rule = Setting.commit_update_keywords_array.detect do |rule|
-      rule['keywords'].include?(action) && (rule['if_tracker_id'].blank? || rule['if_tracker_id'] == issue.tracker_id.to_s)
+      rule['keywords'].include?(action) &&
+        (rule['if_tracker_id'].blank? || rule['if_tracker_id'] == issue.tracker_id.to_s)
     end
     if rule
       issue.assign_attributes rule.slice(*Issue.attribute_names)

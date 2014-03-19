@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -158,6 +158,7 @@ class Mailer < ActionMailer::Base
     @news = news
     @news_url = url_for(:controller => 'news', :action => 'show', :id => news)
     mail :to => news.recipients,
+      :cc => news.cc_for_added_news,
       :subject => "[#{news.project.name}] #{l(:label_news)}: #{news.title}"
   end
 
@@ -266,7 +267,7 @@ class Mailer < ActionMailer::Base
   #   Mailer.account_activation_request(user).deliver => sends an email to all active administrators
   def account_activation_request(user)
     # Send the email to all active administrators
-    recipients = User.active.where(:admin => true).all.collect { |u| u.mail }.compact
+    recipients = User.active.where(:admin => true).collect { |u| u.mail }.compact
     @user = user
     @url = url_for(:controller => 'users', :action => 'index',
                          :status => User::STATUS_REGISTERED,
@@ -330,8 +331,8 @@ class Mailer < ActionMailer::Base
     scope = scope.where(:assigned_to_id => user_ids) if user_ids.present?
     scope = scope.where(:project_id => project.id) if project
     scope = scope.where(:tracker_id => tracker.id) if tracker
-
-    issues_by_assignee = scope.includes(:status, :assigned_to, :project, :tracker).all.group_by(&:assigned_to)
+    issues_by_assignee = scope.includes(:status, :assigned_to, :project, :tracker).
+                              group_by(&:assigned_to)
     issues_by_assignee.keys.each do |assignee|
       if assignee.is_a?(Group)
         assignee.users.each do |user|
