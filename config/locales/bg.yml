@@ -511,6 +511,7 @@ bg:
   label_issue_updated: Обновена задача
   label_issue_note_added: Добавена бележка
   label_issue_status_updated: Обновено състояние
+  label_issue_assigned_to_updated: Задачата е с назначен нов изпълнител
   label_issue_priority_updated: Обновен приоритет
   label_document: Документ
   label_document_new: Нов документ
@@ -914,6 +915,9 @@ bg:
   label_checkboxes: чек-бокс
   label_link_values_to: URL (опция)
   label_custom_field_select_type: "Изберете тип на обект, към който потребителското поле да бъде асоциирано"
+  label_check_for_updates: Проверка за нови версии
+  label_latest_compatible_version: Последна съвместима версия
+  label_unknown_plugin: Непознат плъгин
 
   button_login: Вход
   button_submit: Изпращане
@@ -1106,4 +1110,3 @@ bg:
   description_date_from: Въведете начална дата
   description_date_to: Въведете крайна дата
   text_repository_identifier_info: 'Позволени са малки букви (a-z), цифри, тирета и _.<br />Промяна след създаването му не е възможна.'
-  label_issue_assigned_to_updated: Assignee updated

@@ -705,7 +705,7 @@ RAW
           link_to("Unknown page",
                   "/projects/onlinestore/wiki/Unknown_page",
                   :class => "wiki-page new"),
-      # striked through link
+      # struck through link
       '-[[Another page|Page]]-' =>
           "<del>".html_safe +
             link_to("Page",
@@ -1165,6 +1165,24 @@ RAW
 
     @project = Project.find(1)
     assert textilizable(raw).gsub("\n", "").include?(expected)
+  end
+
+  def test_toc_with_textile_formatting_should_be_parsed
+    with_settings :text_formatting => 'textile' do
+      assert_select_in textilizable("{{toc}}\n\nh1. Heading"), 'ul.toc li', :text => 'Heading'
+      assert_select_in textilizable("{{<toc}}\n\nh1. Heading"), 'ul.toc.left li', :text => 'Heading'
+      assert_select_in textilizable("{{>toc}}\n\nh1. Heading"), 'ul.toc.right li', :text => 'Heading'
+    end
+  end
+
+  if Object.const_defined?(:Redcarpet)
+  def test_toc_with_markdown_formatting_should_be_parsed
+    with_settings :text_formatting => 'markdown' do
+      assert_select_in textilizable("{{toc}}\n\n# Heading"), 'ul.toc li', :text => 'Heading'
+      assert_select_in textilizable("{{<toc}}\n\n# Heading"), 'ul.toc.left li', :text => 'Heading'
+      assert_select_in textilizable("{{>toc}}\n\n# Heading"), 'ul.toc.right li', :text => 'Heading'
+    end
+  end
   end
 
   def test_section_edit_links
